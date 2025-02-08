@@ -7,6 +7,10 @@
             .url = "git+https://github.com/ziglang/zig#cdc9d65b0db3e988ae0f4006e05c178312518bfb",
             .hash = "12202d40de63ba70941c0126896f9d63e3d3f54bb3ad3c96575b29ea14a09d58ccaf",
         },
+        .zip = .{
+            .url = "git+https://github.com/marler8997/zipcmdline#3dfca786a489d117e4b72ea10ffb4bbd9fc2dd72",
+            .hash = "12201a08d7eff7619c8eb8284691a3ff959861b4bdd87216f180ed136672fb4ea26f",
+        },
     },
     .paths = .{
         "build.zig",

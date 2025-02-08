@@ -40,13 +40,41 @@ pub fn build(b: *std.Build) !void {
     };
 
     const test_step = b.step("test", "");
+    addTests(b, anyzig, test_step, .{ .make_build_steps = true });
 
+    const zip_dep = b.dependency("zip", .{});
+
+    const host_zip_exe = b.addExecutable(.{
+        .name = "zip",
+        .root_source_file = zip_dep.path("src/zip.zig"),
+        .target = b.graph.host,
+        .optimize = .Debug,
+    });
+
+    const ci_step = b.step("ci", "The build/test step to run on the CI");
+    ci_step.dependOn(b.getInstallStep());
+    ci_step.dependOn(test_step);
+    try ci(b, zig_mod, ci_step, host_zip_exe);
+}
+
+const SharedTestOptions = struct {
+    make_build_steps: bool,
+    failing_to_execute_foreign_is_an_error: bool = true,
+};
+fn addTests(
+    b: *std.Build,
+    anyzig: *std.Build.Step.Compile,
+    test_step: *std.Build.Step,
+    opt: SharedTestOptions,
+) void {
     inline for (&.{ "-h", "--help" }) |flag| {
         const run = b.addRunArtifact(anyzig);
         run.setName(b.fmt("anyzig {s}", .{flag}));
         run.addArg(flag);
         run.addCheck(.{ .expect_stdout_match = "Usage: zig [command] [options]" });
-        b.step(b.fmt("test{s}", .{flag}), "").dependOn(&run.step);
+        if (opt.make_build_steps) {
+            b.step(b.fmt("test{s}", .{flag}), "").dependOn(&run.step);
+        }
         test_step.dependOn(&run.step);
     }
 
@@ -147,7 +175,9 @@ pub fn build(b: *std.Build) !void {
             _ = run.addOutputDirectoryArg("out");
             run.addArtifactArg(anyzig);
             run.addArg("build");
-            b.step(b.fmt("test-{s}-build", .{zig_version}), "").dependOn(&run.step);
+            if (opt.make_build_steps) {
+                b.step(b.fmt("test-{s}-build", .{zig_version}), "").dependOn(&run.step);
+            }
             test_step.dependOn(&run.step);
         }
     }
@@ -171,3 +201,112 @@ const ZigRelease = enum {
         return if (@intFromEnum(self) >= @intFromEnum(ZigRelease.@"0.12.0")) .simple else .exe_and_lib;
     }
 };
+
+fn ci(
+    b: *std.Build,
+    zig_mod: *std.Build.Module,
+    ci_step: *std.Build.Step,
+    host_zip_exe: *std.Build.Step.Compile,
+) !void {
+    const ci_targets = [_][]const u8{
+        "x86_64-linux",
+        "x86_64-macos",
+        "x86_64-windows",
+        "aarch64-linux",
+        "aarch64-macos",
+        "aarch64-windows",
+        "arm-linux",
+        "riscv64-linux",
+        "powerpc-linux",
+        "powerpc64le-linux",
+    };
+
+    const make_archive_step = b.step("archive", "Create CI archives");
+    ci_step.dependOn(make_archive_step);
+
+    for (ci_targets) |ci_target_str| {
+        const target = b.resolveTargetQuery(try std.Target.Query.parse(
+            .{ .arch_os_abi = ci_target_str },
+        ));
+        const optimize: std.builtin.OptimizeMode = .ReleaseSafe;
+        const exe = b.addExecutable(.{
+            .name = "zig",
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .single_threaded = true,
+        });
+        exe.root_module.addImport("zig", zig_mod);
+        const install = b.addInstallArtifact(exe, .{
+            .dest_dir = .{ .override = .{ .custom = ci_target_str } },
+        });
+        ci_step.dependOn(&install.step);
+
+        const target_test_step = b.step(b.fmt("test-{s}", .{ci_target_str}), "");
+        addTests(b, exe, target_test_step, .{
+            .make_build_steps = false,
+            // This doesn't seem to be working, so we're only adding these tests
+            // as a dependency if we see the arch is compatible beforehand
+            .failing_to_execute_foreign_is_an_error = false,
+        });
+        const os_compatible = (builtin.os.tag == target.result.os.tag);
+        const arch_compatible = (builtin.cpu.arch == target.result.cpu.arch);
+        if (os_compatible and arch_compatible) {
+            ci_step.dependOn(target_test_step);
+        }
+
+        if (builtin.os.tag == .linux and builtin.cpu.arch == .x86_64) {
+            make_archive_step.dependOn(makeCiArchiveStep(
+                b,
+                ci_target_str,
+                target.result,
+                install,
+                host_zip_exe,
+            ));
+        }
+    }
+}
+
+fn makeCiArchiveStep(
+    b: *std.Build,
+    ci_target_str: []const u8,
+    target: std.Target,
+    exe_install: *std.Build.Step.InstallArtifact,
+    host_zip_exe: *std.Build.Step.Compile,
+) *std.Build.Step {
+    const install_path = b.getInstallPath(.prefix, ".");
+
+    if (target.os.tag == .windows) {
+        const out_zip_file = b.pathJoin(&.{
+            install_path,
+            b.fmt("anyzig-{s}.zip", .{ci_target_str}),
+        });
+        const zip = b.addRunArtifact(host_zip_exe);
+        zip.addArg(out_zip_file);
+        zip.addArg("zig.exe");
+        zip.addArg("zig.pdb");
+        zip.cwd = .{ .cwd_relative = b.getInstallPath(
+            exe_install.dest_dir.?,
+            ".",
+        ) };
+        zip.step.dependOn(&exe_install.step);
+        return &zip.step;
+    }
+
+    const targz = b.pathJoin(&.{
+        install_path,
+        b.fmt("anyzig-{s}.tar.gz", .{ci_target_str}),
+    });
+    const tar = b.addSystemCommand(&.{
+        "tar",
+        "-czf",
+        targz,
+        "zig",
+    });
+    tar.cwd = .{ .cwd_relative = b.getInstallPath(
+        exe_install.dest_dir.?,
+        ".",
+    ) };
+    tar.step.dependOn(&exe_install.step);
+    return &tar.step;
+}

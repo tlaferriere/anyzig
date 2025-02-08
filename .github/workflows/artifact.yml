@@ -1,0 +1,58 @@
+name: Artifacts
+on: [pull_request, workflow_dispatch]
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          # Windows builds
+          - os: windows-latest
+            arch: x86_64
+          - os: windows-latest
+            arch: aarch64
+          - os: windows-latest
+            arch: x86
+          # macOS builds
+          - os: macos-latest
+            arch: aarch64
+          - os: macos-latest
+            arch: x86_64
+          # Linux builds
+          - os: ubuntu-latest
+            arch: x86_64
+          - os: ubuntu-latest
+            arch: aarch64
+          - os: ubuntu-latest
+            arch: armv7a
+          - os: ubuntu-latest
+            arch: riscv64
+          - os: ubuntu-latest
+            arch: powerpc64le
+          - os: ubuntu-latest
+            arch: x86
+          - os: ubuntu-latest
+            arch: loongarch64
+      fail-fast: false
+    runs-on: ${{matrix.os}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v1
+        with:
+          version: 0.14.0-dev.3028+cdc9d65b0
+      - run: |
+          zig build ci --summary all
+      - if: ${{ matrix.os == 'ubuntu-latest' && matrix.arch == 'x86_64' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: anyzig-archives
+          path: |
+            zig-out/anyzig-x86_64-linux.tar.gz
+            zig-out/anyzig-x86_64-macos.tar.gz
+            zig-out/anyzig-x86_64-windows.zip
+            zig-out/anyzig-aarch64-linux.tar.gz
+            zig-out/anyzig-aarch64-macos.tar.gz
+            zig-out/anyzig-aarch64-windows.zip
+            zig-out/anyzig-arm-linux.tar.gz
+            zig-out/anyzig-riscv64-linux.tar.gz
+            zig-out/anyzig-powerpc-linux.tar.gz
+            zig-out/anyzig-powerpc64le-linux.tar.gz
