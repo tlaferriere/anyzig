@@ -11,6 +11,11 @@ $ zig 0.13.0 build-exe myproject.zig
 $ zig 0.14.0-dev.3028+cdc9d65b0 build-exe mynewerproject.zig
 ```
 
+# TODO
+
+- make it easy to configure anyzig and share that configuration accross machines
+- add a "hook" concept that allows the user to run a command for every new version of zig. anyzig should also track anytime it has run a hook for a new version of zig so that if a hook is added, it will re-run that hook for all existing zig versions
+
 # Notes
 
 > NOTE: is there any reason to support an alternative mechanism to declare which version of zig to use?
