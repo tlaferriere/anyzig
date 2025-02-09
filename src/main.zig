@@ -183,7 +183,6 @@ pub fn main() !void {
     const maybe_command: ?[]const u8 = if (argv_index >= all_args.len) null else all_args[argv_index];
 
     const version: []const u8, const is_init = blk: {
-        if (manual_version) |version| break :blk .{ version, true };
         if (maybe_command) |command| {
             if (std.mem.startsWith(u8, command, "-") and !std.mem.eql(u8, command, "-h") and !std.mem.eql(u8, command, "--help")) {
                 try std.io.getStdErr().writer().print(
@@ -193,6 +192,7 @@ pub fn main() !void {
                 std.process.exit(0xff);
             }
             if (std.mem.eql(u8, command, "init") or std.mem.eql(u8, command, "init-exe") or std.mem.eql(u8, command, "init-lib")) {
+                if (manual_version) |version| break :blk .{ version, true };
                 try std.io.getStdErr().writer().print(
                     "error: anyzig init requires a version, i.e. 'zig 0.13.0 {s}'\n",
                     .{command},
@@ -200,6 +200,7 @@ pub fn main() !void {
                 std.process.exit(0xff);
             }
         }
+        if (manual_version) |version| break :blk .{ version, false };
         const build_root = try findBuildRoot(arena, .{}) orelse {
             try std.io.getStdErr().writeAll("anyzig: no build.zig\n" ++
                 "run 'zig VERSION' to specify a version, or, run from a directory with a build.zig file.\n");
