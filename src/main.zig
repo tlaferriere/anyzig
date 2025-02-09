@@ -59,15 +59,16 @@ fn extractMinZigVersion(zon: []const u8) !?Extent {
 
     var offset: usize = 0;
     while (true) {
+        offset = skipWhitespaceAndComments(zon, offset);
         const minimum_zig_version = std.mem.indexOfPos(u8, zon, offset, needle) orelse return null;
-        offset = skipWhitespace(zon, minimum_zig_version + needle.len);
+        offset = skipWhitespaceAndComments(zon, minimum_zig_version + needle.len);
         if (zonInsideComment(zon, minimum_zig_version))
             continue;
         if (offset >= zon.len or zon[offset] != '=') {
             log.debug("build.zig.zon syntax error (missing '=' after '{s}')", .{needle});
             return null;
         }
-        offset = skipWhitespace(zon, offset + 1);
+        offset = skipWhitespaceAndComments(zon, offset + 1);
         if (offset >= zon.len or zon[offset] != '\"') {
             log.debug("build.zig.zon syntax error", .{});
             return null;
@@ -97,9 +98,31 @@ fn zonInsideComment(zon: []const u8, start: usize) bool {
     return false;
 }
 
-fn skipWhitespace(s: []const u8, start: usize) usize {
+fn skipWhitespaceAndComments(s: []const u8, start: usize) usize {
     var offset = start;
-    while (offset < s.len and std.ascii.isWhitespace(s[offset])) : (offset += 1) {}
+    var previous_was_slash = false;
+    while (offset < s.len) {
+        const double_slash = blk: {
+            const at_slash = s[offset] == '/';
+            const double_slash = previous_was_slash and at_slash;
+            previous_was_slash = at_slash;
+            break :blk double_slash;
+        };
+        if (double_slash) {
+            while (true) {
+                offset += 1;
+                if (offset == s.len) break;
+                if (s[offset] == '\n') {
+                    offset += 1;
+                    break;
+                }
+            }
+        } else if (!std.ascii.isWhitespace(s[offset])) {
+            break;
+        } else {
+            offset += 1;
+        }
+    }
     return offset;
 }
 

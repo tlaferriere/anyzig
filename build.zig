@@ -181,6 +181,31 @@ fn addTests(
             test_step.dependOn(&run.step);
         }
     }
+
+    {
+        const write_files = b.addWriteFiles();
+        _ = write_files.add("build.zig", "");
+        _ = write_files.add("build.zig.zon",
+            \\// example comment
+            \\.{
+            \\    .minimum_zig_version = "0.13.0",
+            \\}
+            \\
+        );
+        {
+            const run = b.addRunArtifact(wrap_exe);
+            run.setName(b.fmt("zon with comment", .{}));
+            run.addDirectoryArg(write_files.getDirectory());
+            _ = run.addOutputDirectoryArg("out");
+            run.addArtifactArg(anyzig);
+            run.addArg("version");
+            run.expectStdOutEqual("0.13.0\n");
+            if (opt.make_build_steps) {
+                b.step("test-zon-with-comment", "").dependOn(&run.step);
+            }
+            test_step.dependOn(&run.step);
+        }
+    }
 }
 
 const ZigRelease = enum {
