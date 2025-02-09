@@ -1,10 +1,10 @@
 # anyzig
 
-A universal zig that works with any version. The version of zig to invoke is pulled from the `minimum_zig_version` field of `build.zig.zon`.
+A universal zig executable that lets you run any version of zig. Since you can only have one `zig` executable in your `PATH`, anyzig removes the limitation that this can only be one version. The version of zig to invoke is pulled from the `minimum_zig_version` field of `build.zig.zon`. `build.zig.zon` is found by searching the current or any parent directory.
 
 Anytime a new zig version is needed, anyzig will invoke the equivalent of `zig fetch ZIG_DOWNLOAD_URL` to download it into the global cache.
 
-In addition, you can also specify the version of zig to invoke, i.e.
+In addition, you can also specify the version of zig to invoke by including it as the first argument, i.e.
 
 ```sh
 $ zig 0.13.0 build-exe myproject.zig
