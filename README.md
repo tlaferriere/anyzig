@@ -13,8 +13,10 @@ $ zig 0.14.0-dev.3028+cdc9d65b0 build-exe mynewerproject.zig
 
 # TODO
 
+- provide a mechanism to list all available zig versions, maybe a way to clean them?
+- anyzig should participate in zig build progress reporting especially if it needs to fetch a new compiler version
 - make it easy to configure anyzig and share that configuration accross machines
-- add a "hook" concept that allows the user to run a command for every new version of zig. anyzig should also track anytime it has run a hook for a new version of zig so that if a hook is added, it will re-run that hook for all existing zig versions
+- add a "hook" concept that allows the user to run a command for every new version of zig. anyzig should also track anytime it has run a hook for a new version of zig so that if a hook is added, it will re-run that hook for all existing zig versions.  Maybe also just add a "symlinks" directory option that anyzig will create symlinks for each compiler version.
 
 # Notes
 
