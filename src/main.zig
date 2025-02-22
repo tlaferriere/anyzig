@@ -55,8 +55,12 @@ fn anyzigLog(
 const Extent = struct { start: usize, limit: usize };
 
 fn extractMinZigVersion(zon: []const u8) !?Extent {
-    const needle = ".minimum_zig_version";
-
+    return extractZigVersion(zon, ".minimum_zig_version");
+}
+fn extractMachZigVersion(zon: []const u8) !?Extent {
+    return extractZigVersion(zon, ".mach_zig_version");
+}
+fn extractZigVersion(zon: []const u8, needle: []const u8) !?Extent {
     var offset: usize = 0;
     while (true) {
         offset = skipWhitespaceAndComments(zon, offset);
@@ -135,11 +139,29 @@ fn loadBuildZigZon(arena: Allocator, build_root: BuildRoot) !?[]const u8 {
     return try zon.readToEndAlloc(arena, std.math.maxInt(usize));
 }
 
+fn isMachVersion(version: []const u8) bool {
+    return std.mem.endsWith(u8, version, "-mach");
+}
+
 fn determineZigVersion(arena: Allocator, build_root: BuildRoot) ![]const u8 {
     const zon = try loadBuildZigZon(arena, build_root) orelse {
         log.err("TODO: no build.zig.zon file, maybe try determining zig version from build.zig?", .{});
         std.process.exit(0xff);
     };
+
+    if (try extractMachZigVersion(zon)) |version_extent| {
+        const version = zon[version_extent.start..version_extent.limit];
+        if (!std.mem.endsWith(u8, version, "-mach")) {
+            log.err("expected the .mach_zig_version value to end with '-mach' but got '{s}'", .{version});
+            std.process.exit(0xff);
+        }
+        log.info(
+            "zig mach version '{s}' pulled from '{}build.zig.zon'",
+            .{ version, build_root.directory },
+        );
+        return try arena.dupe(u8, version);
+    }
+
     const version_extent = try extractMinZigVersion(zon) orelse {
         log.err("TODO: build.zig.zon does not have a minimum_zig_version, maybe try determining zig version from build.zig?", .{});
         std.process.exit(0xff);
@@ -247,10 +269,15 @@ pub fn main() !void {
             }
         }
 
-        // TODO: fetch the download index if necessary
-        const url = try getDefaultUrl(arena, version);
-        defer arena.free(url);
-        const hash = hashAndPath(try cmdFetch(gpa, arena, global_cache_directory, url, .{ .debug_hash = false }));
+        const url = try getVersionUrl(arena, app_data_path, version, json_arch_os);
+        defer url.deinit(arena);
+        const hash = hashAndPath(try cmdFetch(
+            gpa,
+            arena,
+            global_cache_directory,
+            url.fetch,
+            .{ .debug_hash = false },
+        ));
         if (maybe_hash) |*previous_hash| {
             if (!std.mem.eql(u8, &previous_hash.val, &hash.val)) {
                 log.warn(
@@ -370,7 +397,7 @@ const os = switch (builtin.os.tag) {
 };
 
 const url_platform = os ++ "-" ++ arch;
-const json_platform = arch ++ "-" ++ os;
+const json_arch_os = arch ++ "-" ++ os;
 const archive_ext = if (builtin.os.tag == .windows) "zip" else "tar.xz";
 
 const VersionKind = enum { release, dev };
@@ -378,10 +405,117 @@ fn determineVersionKind(version: []const u8) VersionKind {
     return if (std.mem.indexOfAny(u8, version, "-+")) |_| .dev else .release;
 }
 
-pub fn getDefaultUrl(allocator: Allocator, compiler_version: []const u8) ![]const u8 {
-    return switch (determineVersionKind(compiler_version)) {
-        .dev => try std.fmt.allocPrint(allocator, "https://ziglang.org/builds/zig-" ++ url_platform ++ "-{0s}." ++ archive_ext, .{compiler_version}),
-        .release => try std.fmt.allocPrint(allocator, "https://ziglang.org/download/{s}/zig-" ++ url_platform ++ "-{0s}." ++ archive_ext, .{compiler_version}),
+const DownloadIndexKind = enum {
+    official,
+    mach,
+    pub fn url(self: DownloadIndexKind) []const u8 {
+        return switch (self) {
+            .official => "https://ziglang.org/download/index.json",
+            .mach => "https://machengine.org/zig/index.json",
+        };
+    }
+};
+
+const DownloadUrl = struct {
+    // use to know if two URL's are the same
+    official: []const u8,
+    // the actual URL to fetch from
+    fetch: []const u8,
+    pub fn initOfficial(url: []const u8) DownloadUrl {
+        return .{ .official = url, .fetch = url };
+    }
+    pub fn deinit(self: DownloadUrl, allocator: std.mem.Allocator) void {
+        allocator.free(self.official);
+        if (self.official.ptr != self.fetch.ptr) {
+            allocator.free(self.fetch);
+        }
+    }
+};
+
+fn getVersionUrl(
+    arena: Allocator,
+    app_data_path: []const u8,
+    version: []const u8,
+    arch_os: []const u8,
+) !DownloadUrl {
+    if (!isMachVersion(version)) return switch (determineVersionKind(version)) {
+        .dev => DownloadUrl.initOfficial(try std.fmt.allocPrint(
+            arena,
+            "https://ziglang.org/builds/zig-" ++ url_platform ++ "-{0s}." ++ archive_ext,
+            .{version},
+        )),
+        .release => DownloadUrl.initOfficial(try std.fmt.allocPrint(
+            arena,
+            "https://ziglang.org/download/{s}/zig-" ++ url_platform ++ "-{0s}." ++ archive_ext,
+            .{version},
+        )),
+    };
+
+    const download_index_kind: DownloadIndexKind = .mach;
+    const basename = switch (download_index_kind) {
+        .official => "download-index.json",
+        .mach => "download-index-mach.json",
+    };
+    const index_path = try std.fs.path.join(arena, &.{ app_data_path, basename });
+    defer arena.free(index_path);
+
+    try_existing_index: {
+        const index_content = blk: {
+            const file = std.fs.cwd().openFile(index_path, .{}) catch |err| switch (err) {
+                error.FileNotFound => break :try_existing_index,
+                else => |e| return e,
+            };
+            defer file.close();
+            break :blk try file.readToEndAlloc(arena, std.math.maxInt(usize));
+        };
+        defer arena.free(index_content);
+        if (extractUrlFromMachDownloadIndex(arena, version, arch_os, index_path, index_content)) |url|
+            return url;
+    }
+
+    try downloadFile(arena, download_index_kind.url(), index_path);
+    const index_content = blk: {
+        // since we just downloaded the file, this should always succeed now
+        const file = try std.fs.cwd().openFile(index_path, .{});
+        defer file.close();
+        break :blk try file.readToEndAlloc(arena, std.math.maxInt(usize));
+    };
+    defer arena.free(index_content);
+    return extractUrlFromMachDownloadIndex(arena, version, arch_os, index_path, index_content) orelse {
+        fatal("compiler version '{s}' is missing from download index {s}", .{ version, index_path });
+    };
+}
+
+fn extractUrlFromMachDownloadIndex(
+    allocator: std.mem.Allocator,
+    version: []const u8,
+    arch_os: []const u8,
+    index_filepath: []const u8,
+    download_index: []const u8,
+) ?DownloadUrl {
+    const root = std.json.parseFromSlice(std.json.Value, allocator, download_index, .{
+        .allocate = .alloc_if_needed,
+    }) catch |e| std.debug.panic(
+        "failed to parse download index '{s}' as JSON with {s}",
+        .{ index_filepath, @errorName(e) },
+    );
+    defer root.deinit();
+    const version_obj = root.value.object.get(version) orelse return null;
+    const arch_os_obj = version_obj.object.get(arch_os) orelse std.debug.panic(
+        "compiler version '{s}' does not contain an entry for arch-os '{s}'",
+        .{ version, arch_os },
+    );
+    const fetch_url = arch_os_obj.object.get("tarball") orelse std.debug.panic(
+        "download index '{s}' version '{s}' arch-os '{s}' is missing the 'tarball' property",
+        .{ index_filepath, version, arch_os },
+    );
+    const official_url = arch_os_obj.object.get("zigTarball") orelse std.debug.panic(
+        "download index '{s}' version '{s}' arch-os '{s}' is missing the 'zigTarball' property",
+        .{ index_filepath, version, arch_os },
+    );
+    return .{
+        .fetch = allocator.dupe(u8, fetch_url.string) catch |e| oom(e),
+        .official = allocator.dupe(u8, official_url.string) catch |e| oom(e),
     };
 }
 
@@ -455,6 +589,107 @@ fn deleteHash(store_path: []const u8, zig_version: []const u8) !void {
     _ = store_path;
     _ = zig_version;
     @panic("todo");
+}
+
+fn downloadFile(allocator: Allocator, url: []const u8, out_filepath: []const u8) !void {
+    std.log.info("downloading '{s}' to '{s}'", .{ url, out_filepath });
+    std.fs.cwd().deleteFile(out_filepath) catch |err| switch (err) {
+        error.FileNotFound => {},
+        else => |e| return e,
+    };
+    const tmp_filepath = try std.mem.concat(allocator, u8, &.{ out_filepath, ".downloading" });
+    defer allocator.free(tmp_filepath);
+    std.fs.cwd().deleteFile(tmp_filepath) catch |err| switch (err) {
+        error.FileNotFound => {},
+        else => |e| return e,
+    };
+
+    if (std.fs.path.dirname(tmp_filepath)) |dir| {
+        try std.fs.cwd().makePath(dir);
+    }
+    const tmp_file = try std.fs.cwd().createFile(tmp_filepath, .{});
+    defer tmp_file.close();
+    switch (download(allocator, url, tmp_file.writer())) {
+        .ok => try std.fs.cwd().rename(tmp_filepath, out_filepath),
+        .err => |err| {
+            std.log.err("could not download '{s}': {s}", .{ url, err });
+            std.process.exit(0xff);
+        },
+    }
+}
+
+const DownloadResult = union(enum) {
+    ok: void,
+    err: []u8,
+    pub fn deinit(self: DownloadResult, allocator: Allocator) void {
+        switch (self) {
+            .ok => {},
+            .err => |e| allocator.free(e),
+        }
+    }
+};
+fn download(allocator: Allocator, url: []const u8, writer: anytype) DownloadResult {
+    const uri = std.Uri.parse(url) catch |err| return .{ .err = std.fmt.allocPrint(
+        allocator,
+        "the URL is invalid ({s})",
+        .{@errorName(err)},
+    ) catch |e| oom(e) };
+
+    var client = std.http.Client{ .allocator = allocator };
+    defer client.deinit();
+
+    client.initDefaultProxies(allocator) catch |err| return .{ .err = std.fmt.allocPrint(
+        allocator,
+        "failed to query the HTTP proxy settings with {s}",
+        .{@errorName(err)},
+    ) catch |e| oom(e) };
+
+    var header_buffer: [4096]u8 = undefined;
+    var request = client.open(.GET, uri, .{
+        .server_header_buffer = &header_buffer,
+        .keep_alive = false,
+    }) catch |err| return .{ .err = std.fmt.allocPrint(
+        allocator,
+        "failed to connect to the HTTP server with {s}",
+        .{@errorName(err)},
+    ) catch |e| oom(e) };
+
+    defer request.deinit();
+
+    request.send() catch |err| return .{ .err = std.fmt.allocPrint(
+        allocator,
+        "failed to send the HTTP request with {s}",
+        .{@errorName(err)},
+    ) catch |e| oom(e) };
+    request.wait() catch |err| return .{ .err = std.fmt.allocPrint(
+        allocator,
+        "failed to read the HTTP response headers with {s}",
+        .{@errorName(err)},
+    ) catch |e| oom(e) };
+
+    if (request.response.status != .ok) return .{ .err = std.fmt.allocPrint(
+        allocator,
+        "the HTTP server replied with unsuccessful response '{d} {s}'",
+        .{ @intFromEnum(request.response.status), request.response.status.phrase() orelse "" },
+    ) catch |e| oom(e) };
+
+    // TODO: we take advantage of request.response.content_length
+
+    var buf: [std.mem.page_size]u8 = undefined;
+    while (true) {
+        const len = request.reader().read(&buf) catch |err| return .{ .err = std.fmt.allocPrint(
+            allocator,
+            "failed to read the HTTP response body with {s}'",
+            .{@errorName(err)},
+        ) catch |e| oom(e) };
+        if (len == 0)
+            return .ok;
+        writer.writeAll(buf[0..len]) catch |err| return .{ .err = std.fmt.allocPrint(
+            allocator,
+            "failed to write the HTTP response body with {s}'",
+            .{@errorName(err)},
+        ) catch |e| oom(e) };
+    }
 }
 
 pub fn cmdFetch(
@@ -613,4 +848,7 @@ fn findBuildRoot(arena: Allocator, options: FindBuildRootOptions) !?BuildRoot {
 pub fn fatal(comptime format: []const u8, args: anytype) noreturn {
     log.err(format, args);
     process.exit(1);
+}
+pub fn oom(e: error{OutOfMemory}) noreturn {
+    @panic(@errorName(e));
 }

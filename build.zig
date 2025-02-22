@@ -150,7 +150,7 @@ fn addTests(
             _ = run.addOutputDirectoryArg("out");
             run.addArtifactArg(anyzig);
             run.addArg("version");
-            run.expectStdOutEqual(zig_version ++ "\n");
+            run.expectStdOutEqual(comptime zig_release.getVersionOutput() ++ "\n");
             test_step.dependOn(&run.step);
         }
 
@@ -221,9 +221,16 @@ const ZigRelease = enum {
     @"0.12.0",
     @"0.12.1",
     @"0.13.0",
+    @"2024.11.0-mach",
 
     pub fn getInitKind(self: ZigRelease) enum { simple, exe_and_lib } {
         return if (@intFromEnum(self) >= @intFromEnum(ZigRelease.@"0.12.0")) .simple else .exe_and_lib;
+    }
+    pub fn getVersionOutput(self: ZigRelease) []const u8 {
+        return switch (self) {
+            .@"2024.11.0-mach" => "0.14.0-dev.2577+271452d22",
+            else => |release| @tagName(release),
+        };
     }
 };
 
