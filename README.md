@@ -19,12 +19,19 @@ Go to https://marler8997.github.io/anyzig and select your OS/Arch to get a downl
 
 Otherwise, you can manually find and download/extract the applicable archive from Releases. It will contain a single static binary named `zig`, unless you're on Windows in which case it's 2 files, `zig.exe` and `zig.pdb`.
 
+# Mach Versions and Download Mirror
+
+Mach is a game engine that provides a mirror to download the zig compiler as well as its own "nominated versions" (see https://machengine.org/docs/nominated-zig/). Mach versions use a different format (i.e. `2024.10.0-mach`) and always end with `-mach`, so, if anyzig sees a version that looks like this, it will know it's a mach version and that it needs to resolve it to a URL using mach's download index.  In addition, anyzig will also look for a `.mach_zig_version = "..."` property in your `build.zig.zon` file and use that instead of `.minimum_zig_version`.
+
+> The reason for using `.mach_zig_version` instead of `.minimum_zig_version` is that in the future, zig will likely do some verification of the minimum_zig_version field and using a mach version there is likely to fail.
+
 # TODO
 
 - provide a mechanism to list all available zig versions, maybe a way to clean them?
 - anyzig should participate in zig build progress reporting especially if it needs to fetch a new compiler version
 - make it easy to configure anyzig and share that configuration accross machines
 - add a "hook" concept that allows the user to run a command for every new version of zig. anyzig should also track anytime it has run a hook for a new version of zig so that if a hook is added, it will re-run that hook for all existing zig versions.  Maybe also just add a "symlinks" directory option that anyzig will create symlinks for each compiler version.
+- add a configuration option to configure whether anyzig should try mach's download mirror or the official download links first
 
 # Notes
 
