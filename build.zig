@@ -94,6 +94,19 @@ fn addTests(
         test_step.dependOn(&run.step);
     }
 
+    {
+        const run = b.addRunArtifact(anyzig);
+        run.setName("anyzig with no build.zig file");
+        run.addArg("version");
+        // the most full-proof directory to avoid finding a build.zig...if
+        // this doesn't work, then no directory would work anyway
+        run.setCwd(.{ .cwd_relative = "/" });
+        run.addCheck(.{
+            .expect_stderr_match = "no build.zig to pull a zig version from, you can:",
+        });
+        test_step.dependOn(&run.step);
+    }
+
     const wrap_exe = b.addExecutable(.{
         .name = "wrap",
         .root_source_file = b.path("test/wrap.zig"),
