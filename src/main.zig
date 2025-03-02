@@ -224,8 +224,11 @@ pub fn main() !void {
         }
         if (manual_version) |version| break :blk .{ version, false };
         const build_root = try findBuildRoot(arena, .{}) orelse {
-            try std.io.getStdErr().writeAll("anyzig: no build.zig\n" ++
-                "run 'zig VERSION' to specify a version, or, run from a directory with a build.zig file.\n");
+            try std.io.getStdErr().writeAll(
+                "no build.zig to pull a zig version from, you can:\n" ++
+                    "  1. run 'zig VERSION' to specify a version\n" ++
+                    "  2. run from a directory where a build.zig can be found\n",
+            );
             std.process.exit(0xff);
         };
         break :blk .{ try determineZigVersion(arena, build_root), false };
