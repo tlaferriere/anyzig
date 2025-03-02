@@ -23,6 +23,8 @@ const introspect = zig.introspect;
 
 const log = std.log;
 
+const LockFile = @import("LockFile.zig");
+
 pub const std_options: std.Options = .{
     .logFn = anyzigLog,
 };
@@ -596,6 +598,13 @@ fn deleteHash(store_path: []const u8, zig_version: []const u8) !void {
 
 fn downloadFile(allocator: Allocator, url: []const u8, out_filepath: []const u8) !void {
     std.log.info("downloading '{s}' to '{s}'", .{ url, out_filepath });
+
+    const lock_filepath = try std.mem.concat(allocator, u8, &.{ out_filepath, ".lock" });
+    defer allocator.free(lock_filepath);
+
+    var file_lock = try LockFile.lock(lock_filepath);
+    defer file_lock.unlock();
+
     std.fs.cwd().deleteFile(out_filepath) catch |err| switch (err) {
         error.FileNotFound => {},
         else => |e| return e,
