@@ -100,7 +100,10 @@ fn addTests(
         run.addArg("version");
         // the most full-proof directory to avoid finding a build.zig...if
         // this doesn't work, then no directory would work anyway
-        run.setCwd(.{ .cwd_relative = "/" });
+        run.setCwd(.{ .cwd_relative = switch (builtin.os.tag) {
+            .windows => "C:/",
+            else => "/",
+        } });
         run.addCheck(.{
             .expect_stderr_match = "no build.zig to pull a zig version from, you can:",
         });
