@@ -21,8 +21,9 @@ const zig = @import("zig");
 const Package = zig.Package;
 const introspect = zig.introspect;
 
-const log = std.log;
+pub const log = std.log;
 
+const hashstore = @import("hashstore.zig");
 const LockFile = @import("LockFile.zig");
 
 pub const std_options: std.Options = .{
@@ -242,15 +243,14 @@ pub fn main() !void {
     defer arena.free(app_data_path);
     log.info("appdata '{s}'", .{app_data_path});
 
-    const store_path = try std.fs.path.join(arena, &.{ app_data_path, "hashstore-" ++ exe_str });
-    defer arena.free(store_path);
+    const hashstore_path = try std.fs.path.join(arena, &.{ app_data_path, "hashstore" });
+    // no need to free
+    try hashstore.init(hashstore_path);
 
-    var find_hash_error_count: u32 = 0;
-    const maybe_hash = maybeHashAndPath(try findHash(store_path, version, &find_hash_error_count));
-    if (maybe_hash == null and find_hash_error_count > 0) {
-        log.err("store file had {} errors, fix them", .{find_hash_error_count});
-        process.exit(0xff);
-    }
+    const hashstore_name = std.fmt.allocPrint(arena, exe_str ++ "-{s}", .{version}) catch |e| oom(e);
+    // no need to free
+
+    const maybe_hash = maybeHashAndPath(try hashstore.find(hashstore_path, hashstore_name));
 
     const override_global_cache_dir: ?[]const u8 = try EnvVar.ZIG_GLOBAL_CACHE_DIR.get(arena);
     var global_cache_directory: Directory = l: {
@@ -285,24 +285,20 @@ pub fn main() !void {
             url.fetch,
             .{ .debug_hash = false },
         ));
+        log.info("downloaded {s} to '{}{s}'", .{ hashstore_name, global_cache_directory, hash.path() });
         if (maybe_hash) |*previous_hash| {
-            if (!previous_hash.val.eql(&hash.val)) {
+            if (previous_hash.val.eql(&hash.val)) {
+                log.info("{s} was already in the hashstore as {s}", .{ hashstore_name, hash.val.toSlice() });
+            } else {
                 log.warn(
-                    "version '{s}' hash has changed!\nold:{s}\nnew:{s}\n",
-                    .{ version, previous_hash.val.toSlice(), hash.val.toSlice() },
+                    "{s} hash has changed!\nold:{s}\nnew:{s}\n",
+                    .{ hashstore_name, previous_hash.val.toSlice(), hash.val.toSlice() },
                 );
-                try deleteHash(store_path, version);
+                try hashstore.delete(hashstore_path, hashstore_name);
+                try hashstore.save(hashstore_path, hashstore_name, hash.val.toSlice());
             }
-        }
-        log.info("downloaded zig to '{}{s}'", .{ global_cache_directory, hash.path() });
-
-        try std.fs.cwd().makePath(app_data_path);
-
-        {
-            const store_file = try std.fs.cwd().createFile(store_path, .{ .truncate = false });
-            defer store_file.close();
-            try store_file.seekFromEnd(0);
-            try store_file.writer().print("{s} {s}\n", .{ version, hash.val.toSlice() });
+        } else {
+            try hashstore.save(hashstore_path, hashstore_name, hash.val.toSlice());
         }
         break :blk hash;
     };
@@ -551,61 +547,6 @@ fn hashAndPath(hash: zig.Package.Hash) HashAndPath {
     result.path_buf.buffer[1] = std.fs.path.sep;
     @memcpy(result.path_buf.buffer[2..][0..hash_slice.len], hash_slice);
     return result;
-}
-
-fn findHash(store_path: []const u8, zig_version: []const u8, out_error_count: *u32) !?zig.Package.Hash {
-    const store_file = std.fs.cwd().openFile(store_path, .{}) catch |err| switch (err) {
-        error.FileNotFound => return null,
-        else => |e| return e,
-    };
-    defer store_file.close();
-
-    var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena_instance.deinit();
-    const arena = arena_instance.allocator();
-
-    const content = try store_file.readToEndAlloc(arena, std.math.maxInt(usize));
-    defer arena.free(content);
-    var line_it = std.mem.splitScalar(u8, content, '\n');
-    var lineno: u32 = 0;
-    while (line_it.next()) |line_full| {
-        lineno += 1;
-        const line = std.mem.trim(u8, line_full, &std.ascii.whitespace);
-        if (line.len == 0) continue; // allow blank lines
-        const sep_index = std.mem.indexOfAny(u8, line, &std.ascii.whitespace) orelse {
-            log.err(
-                "{s}:{}: missing whitespace separator",
-                .{ store_path, lineno },
-            );
-            out_error_count.* += 1;
-            continue;
-        };
-        const line_zig_version = std.mem.trim(u8, line[0..sep_index], &std.ascii.whitespace);
-        const hash_bytes = std.mem.trim(u8, line[sep_index + 1 ..], &std.ascii.whitespace);
-        if (hash_bytes.len > zig.Package.Hash.max_len) {
-            log.err(
-                "{s}:{}: expected hash to be <= {} bytes but is {}",
-                .{ store_path, lineno, zig.Package.Hash.max_len, hash_bytes.len },
-            );
-            out_error_count.* += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, line_zig_version, zig_version)) {
-            return zig.Package.Hash.fromSlice(hash_bytes);
-        }
-    }
-    return null;
-}
-
-fn deleteHash(store_path: []const u8, zig_version: []const u8) !void {
-    _ = store_path;
-    _ = zig_version;
-    if (true) @panic("todo");
-    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    if (true) @panic("todo: when we implement this, use a lock file and atomically assert findHash returns null");
-    //var error_count: u32 = 0;
-    //assert(null == try findHash(store_path, version, &error_count));
 }
 
 fn downloadFile(allocator: Allocator, url: []const u8, out_filepath: []const u8) !void {
