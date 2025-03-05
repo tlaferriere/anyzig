@@ -355,8 +355,13 @@ pub fn main() !void {
             return;
         };
 
-        const current_version = zon[version_extent.start..version_extent.limit];
-        std.debug.panic("todo: ensure zon file contains zig version '{s}' (current is '{s}')", .{ version, current_version });
+        const generated_version = zon[version_extent.start..version_extent.limit];
+        if (std.mem.eql(u8, generated_version, version))
+            return;
+        std.debug.panic(
+            "zig init generated version '{s}' but expected '{s}'",
+            .{ generated_version, version },
+        );
     }
 
     if (!stay_alive) {

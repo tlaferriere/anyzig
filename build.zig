@@ -288,6 +288,7 @@ const ZigRelease = enum {
     @"0.12.0",
     @"0.12.1",
     @"0.13.0",
+    @"0.14.0",
     @"2024.11.0-mach",
 
     pub fn getInitKind(self: ZigRelease) enum { simple, exe_and_lib } {
