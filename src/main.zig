@@ -17,7 +17,6 @@ const Directory = std.Build.Cache.Directory;
 const EnvVar = std.zig.EnvVar;
 
 const zig = @import("zig");
-const MultiHashHexDigest = zig.Package.Manifest.MultiHashHexDigest;
 
 const Package = zig.Package;
 const introspect = zig.introspect;
@@ -265,10 +264,10 @@ pub fn main() !void {
 
     const hash = blk: {
         if (maybe_hash) |hash| {
-            if (global_cache_directory.handle.access(&hash.path, .{})) |_| {
+            if (global_cache_directory.handle.access(hash.path(), .{})) |_| {
                 log.info(
                     "zig '{s}' already exists at '{}{s}'",
-                    .{ version, global_cache_directory, &maybe_hash.?.path },
+                    .{ version, global_cache_directory, hash.path() },
                 );
                 break :blk hash;
             } else |err| switch (err) {
@@ -287,17 +286,15 @@ pub fn main() !void {
             .{ .debug_hash = false },
         ));
         if (maybe_hash) |*previous_hash| {
-            if (!std.mem.eql(u8, &previous_hash.val, &hash.val)) {
+            if (!previous_hash.val.eql(&hash.val)) {
                 log.warn(
                     "version '{s}' hash has changed!\nold:{s}\nnew:{s}\n",
-                    .{ version, &previous_hash.val, &hash.val },
+                    .{ version, previous_hash.val.toSlice(), hash.val.toSlice() },
                 );
-                try deleteHash(version, &previous_hash.val);
-                var error_count: u32 = 0;
-                assert(null == try findHash(store_path, version, &error_count));
+                try deleteHash(store_path, version);
             }
         }
-        log.info("downloaded zig to '{}{s}'", .{ global_cache_directory, &hash.path });
+        log.info("downloaded zig to '{}{s}'", .{ global_cache_directory, hash.path() });
 
         try std.fs.cwd().makePath(app_data_path);
 
@@ -305,12 +302,12 @@ pub fn main() !void {
             const store_file = try std.fs.cwd().createFile(store_path, .{ .truncate = false });
             defer store_file.close();
             try store_file.seekFromEnd(0);
-            try store_file.writer().print("{s} {s}\n", .{ version, &hash.val });
+            try store_file.writer().print("{s} {s}\n", .{ version, hash.val.toSlice() });
         }
         break :blk hash;
     };
 
-    const versioned_exe = try global_cache_directory.joinZ(arena, &.{ &hash.path, exe_str });
+    const versioned_exe = try global_cache_directory.joinZ(arena, &.{ hash.path(), exe_str });
     defer arena.free(versioned_exe);
 
     const stay_alive = is_init or (builtin.os.tag == .windows);
@@ -533,26 +530,30 @@ fn extractUrlFromMachDownloadIndex(
     };
 }
 
+const PathBuf = std.BoundedArray(u8, 2 + zig.Package.Hash.max_len);
 const HashAndPath = struct {
-    val: MultiHashHexDigest,
-    path: [2 + @sizeOf(MultiHashHexDigest):0]u8,
+    val: zig.Package.Hash,
+    path_buf: PathBuf,
+    pub fn path(self: *const HashAndPath) []const u8 {
+        return self.path_buf.slice();
+    }
 };
-fn maybeHashAndPath(maybe_hash: ?MultiHashHexDigest) ?HashAndPath {
+fn maybeHashAndPath(maybe_hash: ?zig.Package.Hash) ?HashAndPath {
     return hashAndPath(maybe_hash orelse return null);
 }
-fn hashAndPath(hash: MultiHashHexDigest) HashAndPath {
-    var path: [2 + @sizeOf(MultiHashHexDigest):0]u8 = undefined;
-    path[0] = 'p';
-    path[1] = std.fs.path.sep;
-    @memcpy(path[2..], &hash);
-    assert(path[path.len] == 0);
-    return .{
+fn hashAndPath(hash: zig.Package.Hash) HashAndPath {
+    const hash_slice = hash.toSlice();
+    var result: HashAndPath = .{
         .val = hash,
-        .path = path,
+        .path_buf = PathBuf.init(2 + hash_slice.len) catch unreachable,
     };
+    result.path_buf.buffer[0] = 'p';
+    result.path_buf.buffer[1] = std.fs.path.sep;
+    @memcpy(result.path_buf.buffer[2..][0..hash_slice.len], hash_slice);
+    return result;
 }
 
-fn findHash(store_path: []const u8, zig_version: []const u8, out_error_count: *u32) !?MultiHashHexDigest {
+fn findHash(store_path: []const u8, zig_version: []const u8, out_error_count: *u32) !?zig.Package.Hash {
     const store_file = std.fs.cwd().openFile(store_path, .{}) catch |err| switch (err) {
         error.FileNotFound => return null,
         else => |e| return e,
@@ -580,20 +581,18 @@ fn findHash(store_path: []const u8, zig_version: []const u8, out_error_count: *u
             continue;
         };
         const line_zig_version = std.mem.trim(u8, line[0..sep_index], &std.ascii.whitespace);
-        const hash = std.mem.trim(u8, line[sep_index + 1 ..], &std.ascii.whitespace);
-        if (hash.len != zig.Package.Manifest.multihash_hex_digest_len) {
+        const hash_bytes = std.mem.trim(u8, line[sep_index + 1 ..], &std.ascii.whitespace);
+        if (hash_bytes.len > zig.Package.Hash.max_len) {
             log.err(
-                "{s}:{}: expected hash to be {} bytes but is {}",
-                .{ store_path, lineno, zig.Package.Manifest.multihash_hex_digest_len, hash.len },
+                "{s}:{}: expected hash to be <= {} bytes but is {}",
+                .{ store_path, lineno, zig.Package.Hash.max_len, hash_bytes.len },
             );
             out_error_count.* += 1;
             continue;
         }
 
         if (std.mem.eql(u8, line_zig_version, zig_version)) {
-            var result: MultiHashHexDigest = undefined;
-            @memcpy(&result, hash);
-            return result;
+            return zig.Package.Hash.fromSlice(hash_bytes);
         }
     }
     return null;
@@ -602,7 +601,11 @@ fn findHash(store_path: []const u8, zig_version: []const u8, out_error_count: *u
 fn deleteHash(store_path: []const u8, zig_version: []const u8) !void {
     _ = store_path;
     _ = zig_version;
-    @panic("todo");
+    if (true) @panic("todo");
+    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    if (true) @panic("todo: when we implement this, use a lock file and atomically assert findHash returns null");
+    //var error_count: u32 = 0;
+    //assert(null == try findHash(store_path, version, &error_count));
 }
 
 fn downloadFile(allocator: Allocator, url: []const u8, out_filepath: []const u8) !void {
@@ -696,7 +699,7 @@ fn download(allocator: Allocator, url: []const u8, writer: anytype) DownloadResu
 
     // TODO: we take advantage of request.response.content_length
 
-    var buf: [std.mem.page_size]u8 = undefined;
+    var buf: [4096]u8 = undefined;
     while (true) {
         const len = request.reader().read(&buf) catch |err| return .{ .err = std.fmt.allocPrint(
             allocator,
@@ -721,10 +724,10 @@ pub fn cmdFetch(
     opt: struct {
         debug_hash: bool,
     },
-) !MultiHashHexDigest {
+) !zig.Package.Hash {
     const color: Color = .auto;
     const work_around_btrfs_bug = native_os == .linux and
-        try EnvVar.ZIG_BTRFS_WORKAROUND.isSet(arena);
+        EnvVar.ZIG_BTRFS_WORKAROUND.isSet();
 
     var thread_pool: ThreadPool = undefined;
     try thread_pool.init(.{ .allocator = gpa });
@@ -764,13 +767,15 @@ pub fn cmdFetch(
         .job_queue = &job_queue,
         .omit_missing_hash_error = true,
         .allow_missing_paths_field = false,
+        .allow_missing_fingerprint = true,
+        .allow_name_string = true,
         .use_latest_commit = true,
 
         .package_root = undefined,
         .error_bundle = undefined,
         .manifest = null,
         .manifest_ast = undefined,
-        .actual_hash = undefined,
+        .computed_hash = undefined,
         .has_build_zig = false,
         .oom_flag = false,
         .latest_commit = null,
@@ -791,12 +796,12 @@ pub fn cmdFetch(
         process.exit(1);
     }
 
-    const hex_digest = Package.Manifest.hexDigest(fetch.actual_hash);
+    const package_hash = fetch.computedPackageHash();
 
     root_prog_node.end();
     root_prog_node = .{ .index = .none };
 
-    return hex_digest;
+    return package_hash;
 }
 
 const BuildRoot = struct {

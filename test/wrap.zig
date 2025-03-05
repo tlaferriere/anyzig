@@ -9,7 +9,14 @@ pub fn main() !u8 {
 
     const input_dir = all_args[1];
     const output_dir = all_args[2];
-    const exe_index = 3;
+    const options = all_args[3];
+    const exe_index = 4;
+
+    if (std.mem.eql(u8, options, "nosetup")) {} else if (std.mem.eql(u8, options, "badhash")) {
+        @panic("todo");
+    } else {
+        std.debug.panic("todo: support setup options '{s}'", .{options});
+    }
 
     try std.fs.cwd().deleteTree(output_dir);
     try std.fs.cwd().makeDir(output_dir);

@@ -180,6 +180,7 @@ fn addTests(
             init.setName(b.fmt("zig {s} build init", .{zig_version}));
             init.addArg("--no-input");
             const out = init.addOutputDirectoryArg("out");
+            init.addArg("nosetup");
             init.addArtifactArg(anyzig);
             init.addArg(zig_version);
             init.addArg(switch (zig_release.getInitKind()) {
@@ -194,6 +195,7 @@ fn addTests(
             run.setName(b.fmt("zig {s} version", .{zig_version}));
             run.addDirectoryArg(init_out);
             _ = run.addOutputDirectoryArg("out");
+            run.addArg("nosetup");
             run.addArtifactArg(anyzig);
             run.addArg("version");
             run.expectStdOutEqual(comptime zig_release.getVersionOutput() ++ "\n");
@@ -219,6 +221,7 @@ fn addTests(
             run.setName(b.fmt("zig {s} build", .{zig_version}));
             run.addDirectoryArg(init_out);
             _ = run.addOutputDirectoryArg("out");
+            run.addArg("nosetup");
             run.addArtifactArg(anyzig);
             run.addArg("build");
             if (opt.make_build_steps) {
@@ -226,6 +229,23 @@ fn addTests(
             }
             test_step.dependOn(&run.step);
         }
+    }
+
+    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    // TODO: finish this test
+    if (false) {
+        const run = b.addRunArtifact(wrap_exe);
+        run.setName(b.fmt("bad hash", .{}));
+        run.addArg("--no-input");
+        _ = run.addOutputDirectoryArg("out");
+        run.addArg("badhash");
+        run.addArtifactArg(anyzig);
+        run.addArg("version");
+        //run.expectStdOutEqual("0.13.0\n");
+        if (opt.make_build_steps) {
+            b.step("test-bad-hash", "").dependOn(&run.step);
+        }
+        test_step.dependOn(&run.step);
     }
 
     {
@@ -243,6 +263,7 @@ fn addTests(
             run.setName(b.fmt("zon with comment", .{}));
             run.addDirectoryArg(write_files.getDirectory());
             _ = run.addOutputDirectoryArg("out");
+            run.addArg("nosetup");
             run.addArtifactArg(anyzig);
             run.addArg("version");
             run.expectStdOutEqual("0.13.0\n");
