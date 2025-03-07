@@ -1,6 +1,7 @@
 /// A file-based locking mechanism for synchronizing operations between multiple processes
 pub const LockFile = @This();
 
+const builtin = @import("builtin");
 const std = @import("std");
 
 path: []const u8,
@@ -20,8 +21,14 @@ pub fn lock(path: []const u8) !LockFile {
 
     // Write the current process ID to the lock file
     // This is helpful for debugging and allows other processes to detect stale locks
-    var pid_buffer: [16]u8 = undefined;
-    const pid_text = try std.fmt.bufPrint(&pid_buffer, "{d}", .{std.os.linux.getpid()});
+    const pid = switch (builtin.os.tag) {
+        .windows => std.os.windows.GetCurrentProcessId(),
+        .linux => std.os.linux.getpid(),
+        .macos => std.c.getpid(),
+        else => @compileError("todo"),
+    };
+    var pid_buffer: [40]u8 = undefined;
+    const pid_text = try std.fmt.bufPrint(&pid_buffer, "{d}", .{pid});
     _ = try file.writeAll(pid_text);
     try file.sync();
 
