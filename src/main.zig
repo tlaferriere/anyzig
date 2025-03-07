@@ -387,18 +387,18 @@ fn isRelease(str: []const u8) bool {
 }
 
 const arch = switch (builtin.cpu.arch) {
-    .x86_64 => "x86_64",
     .aarch64 => "aarch64",
     .arm => "armv7a",
-    .riscv64 => "riscv64",
     .powerpc64le => "powerpc64le",
-    .powerpc => "powerpc",
+    .riscv64 => "riscv64",
+    .x86 => "x86",
+    .x86_64 => "x86_64",
     else => @compileError("Unsupported CPU Architecture"),
 };
 const os = switch (builtin.os.tag) {
-    .windows => "windows",
     .linux => "linux",
     .macos => "macos",
+    .windows => "windows",
     else => @compileError("Unsupported OS"),
 };
 

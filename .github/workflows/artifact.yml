@@ -7,11 +7,11 @@ jobs:
         include:
           # Windows builds
           - os: windows-latest
-            arch: x86_64
-          - os: windows-latest
             arch: aarch64
           - os: windows-latest
             arch: x86
+          - os: windows-latest
+            arch: x86_64
           # macOS builds
           - os: macos-latest
             arch: aarch64
@@ -19,19 +19,17 @@ jobs:
             arch: x86_64
           # Linux builds
           - os: ubuntu-latest
-            arch: x86_64
-          - os: ubuntu-latest
             arch: aarch64
           - os: ubuntu-latest
             arch: armv7a
           - os: ubuntu-latest
-            arch: riscv64
-          - os: ubuntu-latest
             arch: powerpc64le
+          - os: ubuntu-latest
+            arch: riscv64
           - os: ubuntu-latest
             arch: x86
           - os: ubuntu-latest
-            arch: loongarch64
+            arch: x86_64
       fail-fast: false
     runs-on: ${{matrix.os}}
     steps:
@@ -46,13 +44,14 @@ jobs:
         with:
           name: anyzig-archives
           path: |
-            zig-out/anyzig-x86_64-linux.tar.gz
-            zig-out/anyzig-x86_64-macos.tar.gz
-            zig-out/anyzig-x86_64-windows.zip
             zig-out/anyzig-aarch64-linux.tar.gz
             zig-out/anyzig-aarch64-macos.tar.gz
             zig-out/anyzig-aarch64-windows.zip
             zig-out/anyzig-arm-linux.tar.gz
-            zig-out/anyzig-riscv64-linux.tar.gz
-            zig-out/anyzig-powerpc-linux.tar.gz
             zig-out/anyzig-powerpc64le-linux.tar.gz
+            zig-out/anyzig-riscv64-linux.tar.gz
+            zig-out/anyzig-x86-linux.tar.gz
+            zig-out/anyzig-x86-windows.zip
+            zig-out/anyzig-x86_64-linux.tar.gz
+            zig-out/anyzig-x86_64-macos.tar.gz
+            zig-out/anyzig-x86_64-windows.zip
