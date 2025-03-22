@@ -446,8 +446,8 @@ fn getVersionUrl(
 ) !DownloadUrl {
     if (build_options.exe == .zls) return DownloadUrl.initOfficial(std.fmt.allocPrint(
         arena,
-        "https://builds.zigtools.org/zls-{s}-{s}.zip",
-        .{ url_platform, version },
+        "https://builds.zigtools.org/zls-{s}-{s}.{s}",
+        .{ url_platform, version, archive_ext },
     ) catch |e| oom(e));
 
     if (!isMachVersion(version)) return switch (determineVersionKind(version)) {
